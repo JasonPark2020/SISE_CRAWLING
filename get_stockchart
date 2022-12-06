@@ -1,0 +1,123 @@
+import requests
+import pandas as pd
+from bs4 import BeautifulSoup
+import time
+import random
+import datetime
+
+URL_NAVERFIN_SISE = 'https://finance.naver.com/item/sise_day.naver?code={code}&page={page}'
+HEADERS = {
+    'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+    'accept-encoding': 'gzip, deflate, br',
+    'accept-language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+    'cache-control': 'no-cache',
+    'pragma': 'no-cache',
+    'sec-ch-ua': '"Whale";v="3", " Not;A Brand";v="99", "Chromium";v="96"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': 'document',
+    'sec-fetch-mode': 'navigate',
+    'sec-fetch-site': 'none',
+    'sec-fetch-user': '?1',
+    'upgrade-insecure-requests': '1',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.76 Whale/3.12.129.34 Safari/537.36',
+}
+
+
+def get_stockchart(code, pages=1):
+    current_code = code    
+    dfs = []
+    cnt = 0
+# pages가 0이면 마지막 페이지까지 크롤링
+# 1페이지만 있는 신규상장종목은 종료되버림 해결!!
+    if pages == 0:
+        r = requests.get(URL_NAVERFIN_SISE.format(code=code, page=1), headers=HEADERS)
+        l = BeautifulSoup(r.text, 'html.parser')
+        try:
+            last_page = l.find('td', class_='pgRR').find('a')['href']
+            last_page = last_page.split('&')[1]
+            last_page = int(last_page.split('=')[1])
+        except Exception:
+            last_page = int(1)
+        pages = last_page
+        print(code, pages, str("Pages"))
+    while True:
+        res = requests.get(URL_NAVERFIN_SISE.format(code=code, page=cnt+1), headers=HEADERS)
+        list_df = pd.read_html(res.text)
+        df = list_df[0]
+        df = df.dropna().reset_index(drop=True)  # NaN 제거
+        df = df.drop(columns = '전일비', axis = 1)
+        df = df.rename( columns = {'날짜':'date', '종가':'close', '시가':'open', '저가':'low', '고가':'high', '거래량':'volume'} )
+        # df['date'] = pd.to_datetime(df['date'], format='%Y-%m-%d')
+        # list_diffsign = _get_diffsigns(res)
+        # df['전일비'] *= list_diffsign
+        dfs.append(df)
+        cnt += 1
+# 페이지 수 체크 cnt가 29의 배수면 2~4초간 대기
+        if cnt % 34 < 1:
+            time.sleep(random.randrange(1,3))
+            pass
+        if pages and (cnt >= pages):
+            break
+    return pd.concat(dfs).reset_index(drop=True)
+
+# 상승 하락 체크해서 전일비에 반영
+# def _get_diffsigns(res, columnidx_diff=2):
+#     soup = BeautifulSoup(res.text, 'lxml')
+#     rows = soup.find('table').find_all('tr')
+#     list_diffsign = []
+#     for row in rows:
+#         cols = row.find_all('td')
+#         if len(cols) <= columnidx_diff:
+#             continue
+#         col = cols[columnidx_diff]
+#         if not col:
+#             continue
+#         img = col.find('img')
+#         if img:
+#             if img.attrs.get('alt') == '상승':
+#                 list_diffsign.append(1)
+#             elif img.attrs.get('alt') == '하락':
+#                 list_diffsign.append(-1)
+#         else:
+#             list_diffsign.append(0)
+#     return list_diffsign
+    
+def get_stocks(market=None):
+    market_type = ''
+    if market == 'kospi':
+        market_type = '&marketType=stockMkt'
+    elif market == 'kosdaq':
+        market_type = '&marketType=kosdaqMkt'
+    elif market == 'konex':
+        market_type = '&marketType=konexMkt'
+        
+    url = 'http://kind.krx.co.kr/corpgeneral/corpList.do?currentPageSize=5000&pageIndex=1&method=download&searchType=13{market_type}'.format(market_type=market_type)
+
+    list_df_stocks = pd.read_html(url, header=0, converters={'종목코드': lambda x: str(x)})
+    df_stocks = list_df_stocks[0]
+    return df_stocks
+
+def get_allstocks():
+    kospi = get_stocks('kospi')
+    kosdaq = get_stocks('kosdaq')
+    market = pd.concat([kospi, kosdaq])
+    market.to_csv('D:\\anaconda\\source_code\\KOPSI_KOSDAQ_CODES.csv', encoding='utf-8-sig')
+    all_codes = list(market.iloc[:, 1])
+
+    count = 0
+    dfs = []
+    for i in all_codes[1266:]:
+        df = get_stockchart(i, 0)
+        df.insert(0, 'code', i)
+        dfs.append(df)
+        count = count + 1
+        if count%10 == 0:
+            cons = pd.concat(dfs).reset_index(drop=True)
+            cons.to_csv('./ohlc_KOSPI_' + str(datetime.date.today()) + '.csv', encoding='utf-8-sig', index=False)
+            print("saving", str(count))
+            pass
+    dfs = pd.concat(dfs).reset_index(drop=True)
+    dfs.to_csv('./ohlc_KOSPI_KOSDAQ_' + str(datetime.date.today()) + '.csv', encoding='utf-8-sig', index=False)
+    dfs = dfs.to_dict(orient='record')
+    return dfs
