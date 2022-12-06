@@ -1,0 +1,15 @@
+from pymongo import MongoClient
+client = MongoClient('mongodb://localhost:27017')
+db = client['lecture']
+
+coll = db['chart']
+coll.create_index( [ ( 'code', 1 ), ( 'date', -1 ) ], unique = True )
+coll.create_index( [ ( 'code', 1 ) ] )
+coll.create_index( [ ( 'date', 1 ) ] )
+
+for item in data:
+    coll.replace_one( {'code':item['code'], 'date':item['date']}, item, upsert=True)
+    
+cursor = coll.find({}, {'_id': 0})
+data = list(cursor)
+data
